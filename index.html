@@ -16,14 +16,10 @@
     button{color:#eee;border-color:#444}
     button:hover{background:#222}
     .note{border-color:#333;color:#777}
-    .note a{color:#aaa}
-    .formats span{background:#222;color:#aaa;border-color:#333}
   }
   .wrap{max-width:640px;margin:0 auto;padding:3rem 1.5rem}
   h1{font-size:22px;font-weight:500;margin-bottom:.25rem}
-  .sub{font-size:14px;color:#666;margin-bottom:1.5rem}
-  .formats{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:1.75rem}
-  .formats span{font-size:11px;padding:3px 8px;border:0.5px solid #ddd;border-radius:6px;color:#888;font-family:monospace}
+  .sub{font-size:14px;color:#666;margin-bottom:2rem}
   .drop{border:1.5px dashed #bbb;border-radius:12px;padding:2.5rem 1.5rem;text-align:center;cursor:pointer;transition:background .15s}
   .drop:hover,.drop.over{background:#f7f7f7}
   .drop i{font-size:32px;color:#999;display:block;margin-bottom:.75rem}
@@ -38,23 +34,18 @@
   .out-label{font-size:11px;font-weight:500;color:#999;letter-spacing:.06em;text-transform:uppercase}
   button{font-size:13px;background:none;border:.5px solid #ccc;border-radius:8px;padding:5px 12px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;transition:background .1s}
   button:hover{background:#f5f5f5}
-  textarea{width:100%;height:380px;font-family:monospace;font-size:13px;border:.5px solid #ddd;border-radius:8px;padding:.75rem;resize:vertical;line-height:1.6;background:#fafafa;color:#111}
+  textarea{width:100%;height:420px;font-family:monospace;font-size:13px;border:.5px solid #ddd;border-radius:8px;padding:.75rem;resize:vertical;line-height:1.6;background:#fafafa;color:#111}
   @media(prefers-color-scheme:dark){textarea{background:#1a1a1a;color:#eee}}
   .dl-btn{margin-top:.75rem;width:100%;padding:10px;justify-content:center;font-size:14px}
   .note{margin-top:2rem;padding:.75rem 1rem;border-left:2px solid #e0e0e0;font-size:13px;color:#888;line-height:1.6}
-  .note a{color:#666}
+  .spinner{display:inline-block;width:11px;height:11px;border:1.5px solid #ccc;border-top-color:#555;border-radius:50%;animation:spin .7s linear infinite;vertical-align:middle;margin-right:4px}
+  @keyframes spin{to{transform:rotate(360deg)}}
 </style>
 </head>
 <body>
 <div class="wrap">
   <h1>markitdown</h1>
-  <p class="sub">convert files to markdown — runs in your browser, nothing leaves your device</p>
-
-  <div class="formats">
-    <span>.csv</span><span>.html</span><span>.htm</span><span>.txt</span>
-    <span>.md</span><span>.json</span><span>.jsonl</span><span>.ipynb</span>
-    <span>.xlsx</span><span>.docx</span><span>.pptx</span><span>.xml</span><span>.rss</span>
-  </div>
+  <p class="sub">upload a file, get markdown back — pdf, docx, pptx, xlsx, html, csv and more</p>
 
   <div class="drop" id="drop">
     <i class="ti ti-file-upload"></i>
@@ -75,282 +66,21 @@
   </div>
 
   <div class="note">
-    based on <a href="https://github.com/microsoft/markitdown" target="_blank">microsoft/markitdown</a> — converters ported to JS. no server, no dependencies, no data sent anywhere.
+    files are sent to a private backend for conversion and immediately deleted. nothing is stored.
   </div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/mammoth@1.8.0/mammoth.browser.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
-
 <script>
-// ── HTML → Markdown (markdownify port) ──────────────────────────────────────
-function htmlToMarkdown(html) {
-  const doc = new DOMParser().parseFromString(html, 'text/html');
-  const body = doc.body || doc.documentElement;
-  // Remove script/style
-  body.querySelectorAll('script,style').forEach(e => e.remove());
-  return nodeToMd(body).replace(/\n{3,}/g, '\n\n').trim();
-}
+const BACKEND = 'https://lightweightconversion-production.up.railway.app';
 
-function nodeToMd(node) {
-  if (node.nodeType === 3) {
-    const t = node.textContent;
-    // collapse whitespace but preserve meaningful spaces
-    return t.replace(/[\r\n\t]+/g, ' ');
-  }
-  if (node.nodeType !== 1) return '';
-  const tag = node.tagName.toLowerCase();
-  const inner = () => Array.from(node.childNodes).map(nodeToMd).join('');
-
-  if (['script','style','head'].includes(tag)) return '';
-  if (tag === 'br') return '\n';
-  if (tag === 'hr') return '\n---\n';
-  if (/^h[1-6]$/.test(tag)) {
-    const lvl = parseInt(tag[1]);
-    const text = inner().replace(/\n/g,' ').trim();
-    return '\n' + '#'.repeat(lvl) + ' ' + text + '\n';
-  }
-  if (tag === 'p') return '\n' + inner().trim() + '\n';
-  if (tag === 'blockquote') return inner().split('\n').map(l => '> '+l).join('\n') + '\n';
-  if (tag === 'pre') {
-    const code = node.querySelector('code');
-    const lang = code ? (code.className.replace('language-','')) : '';
-    return '\n```' + lang + '\n' + (code||node).textContent + '\n```\n';
-  }
-  if (tag === 'code') {
-    if (node.closest('pre')) return node.textContent;
-    return '`' + node.textContent + '`';
-  }
-  if (tag === 'strong' || tag === 'b') { const t=inner().trim(); return t ? '**'+t+'**' : ''; }
-  if (tag === 'em' || tag === 'i') { const t=inner().trim(); return t ? '_'+t+'_' : ''; }
-  if (tag === 'a') {
-    const href = node.getAttribute('href') || '';
-    const text = inner().trim();
-    if (!href || href.startsWith('javascript:')) return text;
-    return '[' + text + '](' + href + ')';
-  }
-  if (tag === 'img') {
-    const alt = node.getAttribute('alt') || '';
-    let src = node.getAttribute('src') || '';
-    if (src.startsWith('data:')) src = src.split(',')[0] + '...';
-    return '![' + alt + '](' + src + ')';
-  }
-  if (tag === 'ul') {
-    return '\n' + Array.from(node.children).map(li => '- ' + nodeToMd(li).trim()).join('\n') + '\n';
-  }
-  if (tag === 'ol') {
-    return '\n' + Array.from(node.children).map((li,i) => (i+1)+'. '+nodeToMd(li).trim()).join('\n') + '\n';
-  }
-  if (tag === 'li') return inner();
-  if (tag === 'table') return tableToMd(node) + '\n';
-  if (['div','section','article','main','aside','header','footer','nav'].includes(tag)) {
-    return '\n' + inner() + '\n';
-  }
-  if (tag === 'input' && node.getAttribute('type') === 'checkbox') {
-    return node.hasAttribute('checked') ? '[x] ' : '[ ] ';
-  }
-  return inner();
-}
-
-function tableToMd(table) {
-  const rows = Array.from(table.querySelectorAll('tr'));
-  if (!rows.length) return '';
-  const toRow = tr => Array.from(tr.querySelectorAll('th,td'))
-    .map(c => c.textContent.replace(/\s+/g,' ').replace(/\|/g,'\\|').trim());
-  const data = rows.map(toRow);
-  const cols = Math.max(...data.map(r => r.length));
-  const pad = row => { while(row.length < cols) row.push(''); return row; };
-  const lines = data.map(pad).map(row => '| ' + row.join(' | ') + ' |');
-  lines.splice(1, 0, '| ' + Array(cols).fill('---').join(' | ') + ' |');
-  return '\n' + lines.join('\n') + '\n';
-}
-
-// ── Converters ───────────────────────────────────────────────────────────────
-
-async function convertCSV(buf) {
-  const text = new TextDecoder().decode(buf);
-  const lines = text.trim().split('\n').map(l => l.split(',').map(c => c.trim().replace(/^"|"$/g,'')));
-  if (!lines.length) return '';
-  const header = '| ' + lines[0].join(' | ') + ' |';
-  const sep    = '| ' + lines[0].map(()=>'---').join(' | ') + ' |';
-  const body   = lines.slice(1).map(r => {
-    while (r.length < lines[0].length) r.push('');
-    return '| ' + r.slice(0, lines[0].length).join(' | ') + ' |';
-  });
-  return [header, sep, ...body].join('\n');
-}
-
-async function convertHTML(buf) {
-  const text = new TextDecoder().decode(buf);
-  return htmlToMarkdown(text);
-}
-
-async function convertPlainText(buf) {
-  return new TextDecoder().decode(buf);
-}
-
-async function convertJSON(buf) {
-  const text = new TextDecoder().decode(buf);
-  return '```json\n' + text + '\n```';
-}
-
-async function convertIPYNB(buf) {
-  const text = new TextDecoder().decode(buf);
-  const nb = JSON.parse(text);
-  const parts = [];
-  for (const cell of (nb.cells || [])) {
-    const src = Array.isArray(cell.source) ? cell.source.join('') : (cell.source || '');
-    if (cell.cell_type === 'markdown') parts.push(src);
-    else if (cell.cell_type === 'code') parts.push('```python\n' + src + '\n```');
-    else if (cell.cell_type === 'raw') parts.push('```\n' + src + '\n```');
-  }
-  return parts.join('\n\n');
-}
-
-async function convertXLSX(buf) {
-  const wb = XLSX.read(new Uint8Array(buf), { type: 'array' });
-  let md = '';
-  for (const name of wb.SheetNames) {
-    const html = XLSX.utils.sheet_to_html(wb.Sheets[name]);
-    md += '## ' + name + '\n\n' + htmlToMarkdown(html).trim() + '\n\n';
-  }
-  return md.trim();
-}
-
-async function convertDOCX(buf) {
-  const result = await mammoth.convertToHtml({ arrayBuffer: buf });
-  return htmlToMarkdown(result.value);
-}
-
-async function convertPPTX(buf) {
-  const zip = await JSZip.loadAsync(buf);
-  const slideFiles = Object.keys(zip.files)
-    .filter(f => f.match(/^ppt\/slides\/slide[0-9]+\.xml$/))
-    .sort((a,b) => {
-      const na = parseInt(a.match(/slide(\d+)/)[1]);
-      const nb = parseInt(b.match(/slide(\d+)/)[1]);
-      return na - nb;
-    });
-
-  let md = '';
-  let slideNum = 0;
-
-  for (const slideFile of slideFiles) {
-    slideNum++;
-    const xmlText = await zip.files[slideFile].async('string');
-    const parser = new DOMParser();
-    const xmlDoc = parser.parseFromString(xmlText, 'text/xml');
-
-    md += `\n\n<!-- Slide number: ${slideNum} -->\n`;
-
-    // Get all text elements in document order
-    const textElems = xmlDoc.querySelectorAll('sp');
-    const shapes = [];
-
-    for (const sp of textElems) {
-      // Get position for ordering
-      const xfrm = sp.querySelector('xfrm');
-      const off = xfrm ? xfrm.querySelector('off') : null;
-      const top = off ? parseInt(off.getAttribute('y') || '0') : 0;
-      const left = off ? parseInt(off.getAttribute('x') || '0') : 0;
-
-      // Check if it's a title placeholder
-      const ph = sp.querySelector('ph');
-      const isTitle = ph && (ph.getAttribute('type') === 'title' || ph.getAttribute('type') === 'ctrTitle');
-
-      // Extract text runs
-      const paras = sp.querySelectorAll('p');
-      let text = '';
-      for (const para of paras) {
-        const runs = para.querySelectorAll('r');
-        let paraText = '';
-        for (const r of runs) {
-          const t = r.querySelector('t');
-          if (t) paraText += t.textContent;
-        }
-        if (paraText) text += paraText + '\n';
-      }
-      text = text.trim();
-
-      if (text) shapes.push({ top, left, isTitle, text });
-    }
-
-    // Sort by position (top then left)
-    shapes.sort((a,b) => a.top - b.top || a.left - b.left);
-
-    for (const shape of shapes) {
-      if (shape.isTitle) md += '# ' + shape.text + '\n';
-      else md += shape.text + '\n';
-    }
-  }
-  return md.trim();
-}
-
-async function convertXML(buf) {
-  const text = new TextDecoder().decode(buf);
-  // Check if it's RSS
-  if (text.includes('<rss') || text.includes('<feed')) return convertRSS(text);
-  return '```xml\n' + text + '\n```';
-}
-
-function convertRSS(text) {
-  const doc = new DOMParser().parseFromString(text, 'text/xml');
-  let md = '';
-  const title = doc.querySelector('channel > title, feed > title');
-  if (title) md += '# ' + title.textContent.trim() + '\n\n';
-  const desc = doc.querySelector('channel > description, feed > subtitle');
-  if (desc) md += desc.textContent.trim() + '\n\n';
-  const items = doc.querySelectorAll('item, entry');
-  for (const item of items) {
-    const t = item.querySelector('title');
-    const l = item.querySelector('link');
-    const d = item.querySelector('description, summary, content');
-    if (t) {
-      const href = l ? (l.textContent || l.getAttribute('href') || '') : '';
-      md += '## ' + (href ? `[${t.textContent.trim()}](${href.trim()})` : t.textContent.trim()) + '\n';
-    }
-    if (d) md += htmlToMarkdown(d.textContent).trim() + '\n';
-    md += '\n';
-  }
-  return md.trim();
-}
-
-// ── Dispatch ─────────────────────────────────────────────────────────────────
-async function convert(file) {
-  const ext = file.name.split('.').pop().toLowerCase();
-  const buf = await file.arrayBuffer();
-  switch (ext) {
-    case 'csv':   return convertCSV(buf);
-    case 'html':
-    case 'htm':   return convertHTML(buf);
-    case 'txt':
-    case 'text':
-    case 'md':
-    case 'markdown': return convertPlainText(buf);
-    case 'json':
-    case 'jsonl': return convertJSON(buf);
-    case 'ipynb': return convertIPYNB(buf);
-    case 'xlsx':
-    case 'xls':   return convertXLSX(buf);
-    case 'docx':  return convertDOCX(buf);
-    case 'pptx':  return convertPPTX(buf);
-    case 'xml':
-    case 'rss':
-    case 'atom':  return convertXML(buf);
-    default: throw new Error('unsupported file type: .' + ext);
-  }
-}
-
-// ── UI ────────────────────────────────────────────────────────────────────────
-const drop    = document.getElementById('drop');
-const filein  = document.getElementById('filein');
-const status  = document.getElementById('status');
-const out     = document.getElementById('out');
-const result  = document.getElementById('result');
-const copybtn = document.getElementById('copybtn');
-const dlbtn   = document.getElementById('dlbtn');
-let currentFilename = 'output.md';
+const drop   = document.getElementById('drop');
+const filein = document.getElementById('filein');
+const status = document.getElementById('status');
+const out    = document.getElementById('out');
+const result = document.getElementById('result');
+const copybtn= document.getElementById('copybtn');
+const dlbtn  = document.getElementById('dlbtn');
+let filename = 'output.md';
 
 function setStatus(html, isErr) {
   status.innerHTML = html;
@@ -364,12 +94,19 @@ drop.addEventListener('drop', e => { e.preventDefault(); drop.classList.remove('
 filein.addEventListener('change', () => { if(filein.files[0]) go(filein.files[0]); });
 
 async function go(file) {
-  currentFilename = file.name.replace(/\.[^.]+$/, '') + '.md';
+  filename = file.name.replace(/\.[^.]+$/, '') + '.md';
   out.style.display = 'none';
-  setStatus('converting ' + file.name + '...');
+  setStatus('<span class="spinner"></span> converting ' + file.name + '...');
   try {
-    const md = await convert(file);
-    result.value = md || '(no content extracted)';
+    const form = new FormData();
+    form.append('file', file);
+    const res = await fetch(BACKEND + '/convert', { method: 'POST', body: form });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({detail: 'server error ' + res.status}));
+      throw new Error(err.detail || 'server error');
+    }
+    const data = await res.json();
+    result.value = data.markdown || '(no content extracted)';
     out.style.display = 'block';
     setStatus('✓ done');
   } catch(e) {
@@ -387,7 +124,7 @@ copybtn.addEventListener('click', () => {
 dlbtn.addEventListener('click', () => {
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([result.value], {type:'text/markdown'}));
-  a.download = currentFilename;
+  a.download = filename;
   a.click();
 });
 </script>
