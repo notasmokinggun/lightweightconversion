@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>markitdown</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, sans-serif; background: #fff; color: #111; min-height: 100vh; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #111; color: #eee; }
+    .drop { border-color: #444; }
+    .drop:hover, .drop.over { background: #1a1a1a; }
+    textarea { background: #1a1a1a; color: #eee; border-color: #333; }
+    button { color: #eee; border-color: #444; }
+    button:hover { background: #222; }
+    .note { border-color: #333; color: #888; }
+  }
+  .wrap { max-width: 640px; margin: 0 auto; padding: 3rem 1.5rem; }
+  h1 { font-size: 22px; font-weight: 500; margin-bottom: 0.25rem; }
+  .sub { font-size: 14px; color: #666; margin-bottom: 2rem; }
+  .drop { border: 1.5px dashed #aaa; border-radius: 12px; padding: 2.5rem 1.5rem; text-align: center; cursor: pointer; transition: background 0.15s; }
+  .drop:hover, .drop.over { background: #f5f5f5; }
+  .drop i { font-size: 32px; color: #999; display: block; margin-bottom: 0.75rem; }
+  .drop p { font-size: 14px; color: #666; }
+  .drop strong { color: #111; }
+  @media (prefers-color-scheme: dark) { .drop strong { color: #eee; } }
+  input[type=file] { display: none; }
+  .status { margin-top: 1.25rem; font-size: 13px; color: #666; min-height: 20px; }
+  .status.err { color: #c00; }
+  .out { margin-top: 1.5rem; display: none; }
+  .out-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; }
+  .out-label { font-size: 12px; font-weight: 500; color: #888; letter-spacing: 0.06em; text-transform: uppercase; }
+  button { font-size: 13px; background: none; border: 0.5px solid #ccc; border-radius: 8px; padding: 5px 12px; cursor: pointer; display: inline-flex; align-items: center; gap: 5px; }
+  button:hover { background: #f5f5f5; }
+  textarea { width: 100%; height: 360px; font-family: monospace; font-size: 13px; border: 0.5px solid #ddd; border-radius: 8px; padding: 0.75rem; resize: vertical; line-height: 1.6; }
+  .dl-btn { margin-top: 0.75rem; width: 100%; padding: 10px; justify-content: center; font-size: 14px; }
+  .spinner { display: inline-block; width: 12px; height: 12px; border: 1.5px solid #ccc; border-top-color: #333; border-radius: 50%; animation: spin 0.7s linear infinite; vertical-align: middle; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .note { margin-top: 2rem; padding: 0.75rem 1rem; border-left: 2px solid #ddd; font-size: 13px; color: #888; line-height: 1.6; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>markitdown</h1>
+  <p class="sub">convert any file to markdown — runs fully in your browser, nothing leaves your device</p>
+
+  <div class="drop" id="drop">
+    <i class="ti ti-file-upload"></i>
+    <p><strong>drop a file here</strong></p>
+    <p>or click to browse &mdash; pdf, docx, pptx, xlsx, html, csv, json, images...</p>
+    <input type="file" id="filein">
+  </div>
+
+  <div class="status" id="status"></div>
+
+  <div class="out" id="out">
+    <div class="out-header">
+      <span class="out-label">markdown output</span>
+      <button id="copybtn"><i class="ti ti-copy"></i> copy</button>
+    </div>
+    <textarea id="result" readonly></textarea>
+    <button class="dl-btn" id="dlbtn"><i class="ti ti-download"></i> download .md</button>
+  </div>
+
+  <div class="note">
+    powered by <a href="https://github.com/microsoft/markitdown" target="_blank">microsoft/markitdown</a>
+    running via <a href="https://pyodide.org" target="_blank">Pyodide</a> (Python in WebAssembly).
+    first load downloads ~10mb once &mdash; after that it's instant.
+  </div>
+</div>
+
+<script>
+const drop = document.getElementById('drop');
+const filein = document.getElementById('filein');
+const status = document.getElementById('status');
+const out = document.getElementById('out');
+const result = document.getElementById('result');
+const copybtn = document.getElementById('copybtn');
+const dlbtn = document.getElementById('dlbtn');
+
+let pyodideReady = false;
+let pyodide = null;
+let currentFilename = 'output.md';
+
+async function loadPy() {
+  setStatus('<span class="spinner"></span> loading Python runtime (first time only, ~10s)...');
+  const script = document.createElement('script');
+  script.src = 'https://cdn.jsdelivr.net/pyodide/v0.26.2/full/pyodide.js';
+  document.head.appendChild(script);
+  await new Promise((res, rej) => { script.onload = res; script.onerror = rej; });
+  pyodide = await loadPyodide({ indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.26.2/full/' });
+  setStatus('<span class="spinner"></span> installing markitdown...');
+  await pyodide.loadPackage('micropip');
+  await pyodide.runPythonAsync(`
+import micropip
+await micropip.install('markitdown')
+`);
+  pyodideReady = true;
+  setStatus('ready. drop a file to convert.');
+}
+
+function setStatus(html, isErr) {
+  status.innerHTML = html;
+  status.className = 'status' + (isErr ? ' err' : '');
+}
+
+drop.addEventListener('click', () => filein.click());
+drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('over'); });
+drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+drop.addEventListener('drop', e => { e.preventDefault(); drop.classList.remove('over'); handleFile(e.dataTransfer.files[0]); });
+filein.addEventListener('change', () => { if (filein.files[0]) handleFile(filein.files[0]); });
+
+async function handleFile(file) {
+  if (!file) return;
+  currentFilename = file.name.replace(/\.[^.]+$/, '') + '.md';
+  if (!pyodideReady) await loadPy();
+  setStatus('<span class="spinner"></span> converting ' + file.name + '...');
+  out.style.display = 'none';
+  try {
+    const buf = await file.arrayBuffer();
+    pyodide.FS.writeFile('/tmp/' + file.name, new Uint8Array(buf));
+    const ext = file.name.split('.').pop();
+    const md = await pyodide.runPythonAsync(`
+from markitdown import MarkItDown
+_md = MarkItDown()
+_r = _md.convert('/tmp/${file.name.replace(/'/g, "\\'")}')
+_r.text_content
+`);
+    result.value = md || '(no content extracted)';
+    out.style.display = 'block';
+    setStatus('\u2713 done &mdash; ' + file.name + ' converted successfully.');
+  } catch(e) {
+    setStatus('error: ' + (e.message || String(e)), true);
+  }
+}
+
+copybtn.addEventListener('click', () => {
+  navigator.clipboard.writeText(result.value).then(() => {
+    copybtn.innerHTML = '<i class="ti ti-check"></i> copied';
+    setTimeout(() => { copybtn.innerHTML = '<i class="ti ti-copy"></i> copy'; }, 1500);
+  });
+});
+
+dlbtn.addEventListener('click', () => {
+  const blob = new Blob([result.value], { type: 'text/markdown' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = currentFilename;
+  a.click();
+});
+
+loadPy();
+</script>
+</body>
+</html>
